@@ -1,0 +1,130 @@
+/*
+ *Server kazdu sekundu posiela aktualny cas, klient prijima a zobrazuje
+ *UDP multicast
+ *gcc main.c -o time -lpthread
+ */
+
+#include <stdio.h>
+#include <stdlib.h>
+#include <stdint.h>
+#include <unistd.h>
+#include <string.h>
+#include <time.h>
+
+#include <sys/socket.h>
+#include <sys/types.h>
+#include <netinet/in.h>
+#include <netinet/udp.h>
+#include <arpa/inet.h>
+#include <pthread.h>
+#include <net/if.h>
+
+#define ERROR (1)
+#define SUCCESS (0)
+
+#define PORT (9999)
+#define DST_ADDR "239.1.1.1"
+#define IF_NAME "eth0"
+
+int sock;
+struct sockaddr_in sockAddr;
+
+
+void *receiver(void *arg) {
+
+    int sock = *((int*) arg);
+    struct sockaddr_in sockAddr;
+    time_t message;
+    for (;;) {
+        int size = sizeof (sockAddr);
+        if (recvfrom(sock, &message, sizeof(time_t), 0, (struct sockaddr *) &sockAddr, &size) == -1) {
+            perror("Error recvfrom()");
+            break;
+        }
+        char buff[20];
+        strftime(buff, 20, "%Y-%m-%d %H:%M:%S", localtime(&message));
+        
+        //printf("%lld\n", (long long) message);
+        printf("%s", "cas je: ");
+        printf("%s\n", buff);
+    }
+}
+
+void cleanUp() {
+    close(sock);
+}
+
+int main(int argc, char* argv[]) {
+    
+
+    if ((sock = socket(AF_INET, SOCK_DGRAM, 0)) == -1) {
+        perror("Socket error");
+        return ERROR;
+    }
+
+    memset(&sockAddr, 0, sizeof (sockAddr));
+    sockAddr.sin_family = AF_INET;
+    sockAddr.sin_port = htons(PORT);
+
+    if (inet_pton(AF_INET, DST_ADDR, &sockAddr.sin_addr) <= 0) {
+        perror("Error pton()");
+        close(sock);
+        return ERROR;
+    }
+
+    const char device[] = IF_NAME;
+
+    if (setsockopt(sock, SOL_SOCKET, SO_BINDTODEVICE, device, sizeof (device)) == -1) {
+        perror("Error setsockopt_bind");
+        close(sock);
+        return ERROR;
+    }
+
+    struct ip_mreqn multiJoin;
+
+    if (inet_pton(AF_INET, DST_ADDR, &multiJoin.imr_multiaddr) <= 0) {
+        perror("Error pton()_multi");
+        close(sock);
+        return ERROR;
+    }
+    multiJoin.imr_address.s_addr = INADDR_ANY;
+
+    int ifIndex;
+    if ((ifIndex = if_nametoindex(IF_NAME)) == 0) {
+        perror("Error if_nametoindex()");
+        close(sock);
+        return ERROR;
+    }
+
+    multiJoin.imr_ifindex = ifIndex;
+
+    if (setsockopt(sock, IPPROTO_IP, IP_ADD_MEMBERSHIP, &multiJoin, sizeof (multiJoin)) == -1) {
+        perror("Error setsockopt_multicast"); //chceme pridat clenstvo v multicast skupine
+        close(sock);
+        return ERROR;
+    }
+
+    int en = 1;
+    if (setsockopt(sock, SOL_SOCKET, SO_REUSEADDR, &en, sizeof (int)) < 0) {
+        perror("setsockopt(SO_REUSEADDR) failed");
+    }
+
+    if (bind(sock, (struct sockaddr *) &sockAddr, sizeof (sockAddr)) == -1) {
+        perror("Error pton()");
+        close(sock);
+        return ERROR;
+    }
+
+    pthread_t receiveThread;
+    pthread_create(&receiveThread, NULL, receiver, (void *) &sock);
+
+    for (;;) {
+        time_t cas = time(NULL);
+        
+        if (sendto(sock, &cas, sizeof(cas), 0, (struct sockaddr *) &sockAddr, sizeof (sockAddr)) == -1) {
+            perror("Error sendto()");
+            break;
+        }
+        sleep(1);
+    }
+}

@@ -1,0 +1,106 @@
+#include <stdio.h>
+#include <stdlib.h>
+#include <unistd.h>
+#include <string.h>
+
+#include <sys/types.h>
+#include <sys/socket.h>
+
+#include <arpa/inet.h>
+
+#include <pthread.h>
+
+#define MSG_GEN_LEN     (95)    // = 126-31
+#define TCP_PORT        (1234)
+#define EXIT_ERROR      (1)
+#define BACKLOG         (2)
+
+char MsgGen[MSG_GEN_LEN];
+
+void * clientThread (void * arg)
+{
+    int Socket = *((int *) arg);
+    
+    for(;;) 
+    {
+        // odoslanie správy klientovi
+        if (send(Socket, MsgGen, 95, 0) < strlen(MsgGen))
+        {
+            perror("send");
+            close(Socket);
+            free(arg);
+            pthread_exit(NULL);
+            exit(EXIT_ERROR);
+        }
+    }
+}
+
+int main(void) 
+{
+    for(int i=0; i<95; i++)
+    {        
+        MsgGen[i]=i+32;
+    }
+    
+    int ServerSocket, ClientSocket;
+    struct sockaddr_in ServAddr, ClientAddr;
+    
+    //Vytvorenie socketu - vytvára koncový bod pre komunikáciu a vracia deskriptor
+    if ((ServerSocket = socket(AF_INET,SOCK_STREAM,0)) == -1)
+    {
+        perror("socket");
+        exit(EXIT_ERROR);
+    }
+    
+    /*
+     * napåòame štruktúru paketu ktorý posielame, 
+     * AF_INET - ide o IPv4
+     * TCP_PORT - udanie portu 
+     * INADDR_ANY - udanie IP adresy servera
+    */
+    ServAddr.sin_family = AF_INET;
+    ServAddr.sin_port = htons(TCP_PORT);
+    ServAddr.sin_addr.s_addr = INADDR_ANY;
+    
+    //Zviazanie socketu na adresu pomocou bind
+    if (bind(ServerSocket, (struct sockaddr *) &ServAddr, sizeof(ServAddr)) == -1)
+    {
+        perror("bind");
+        close(ServerSocket);
+        exit(EXIT_ERROR);
+    }
+    
+    // oznaèí socket ako pasívny -> socket používaný len na prijímanie prichádzajúcich spojení
+    if (listen(ServerSocket, BACKLOG) == -1)
+    {
+        perror("listen");
+        close(ServerSocket);
+        exit(EXIT_ERROR);
+    }
+    
+    for(;;)
+    {
+        int * pomSocket;
+        pthread_t pomThread;
+        int pomA = sizeof(struct sockaddr_in);
+        
+        // nadviazanie spojenia s klientom
+        ClientSocket = accept(ServerSocket, (struct sockaddr *) &ClientAddr, (socklen_t *) &(pomA));
+        if (ClientSocket == -1)
+        {
+            perror("accept");
+            continue;
+        }
+        
+        pomSocket = malloc(sizeof(int));
+        *pomSocket = ClientSocket;
+        
+        //vytvorenie vlákna pre klienta kde pomocou funkcie clientThread odovzdávam pomSocket
+        if ((pthread_create(&pomThread, NULL, clientThread, pomSocket)) != 0)
+        {
+            perror("pthread_create");
+            continue;
+        }
+    }
+    return (EXIT_SUCCESS);
+}

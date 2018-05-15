@@ -1,0 +1,75 @@
+/*
+ * File:   main.c
+ * Author: student
+ *
+ * Created on May 30, 2016, 2:20 PM
+ */
+#include <stdio.h>
+#include <stdlib.h>
+#include <sys/types.h>
+#include <sys/socket.h>
+#include <arpa/inet.h>
+#include <errno.h>
+#include <netdb.h>
+#include <string.h>
+#include <unistd.h>
+#include <ctype.h>
+#define DST_PORT    (1234)
+/*
+ * Wake-on-Lan
+ */
+int main(int argc, char** argv) {
+    int Socket;
+    int BC = 1;
+    struct sockaddr_in Server;
+    unsigned char data[102];
+    unsigned char mac[6];
+   
+    if(argv < 2){
+        printf("Malo Argumentov");
+        exit(EXIT_FAILURE);
+    }
+   
+    for(int i = 0; i < 6; i++){
+        data[i] = 0xFF;
+    }
+   
+    //Bud cez for alebo takto natvrdo to je fuk :D
+    /*data[0] = 0xFF;
+    data[1] = 0xFF;  
+    data[2] = 0xFF;
+    data[3] = 0xFF;
+    data[4] = 0xFF;
+    data[5] = 0xFF;*/
+   
+    mac[0] = 0x08;
+    mac[1] = 0x00;
+    mac[2] = 0x27;
+    mac[3] = 0x24;
+    mac[4] = 0x9b;
+    mac[5] = 0xdc;
+   
+    //Spojime do inputu FF + MacAdresa 16x
+    for(int i = 1; i <= 16; i++){
+        memcpy(&data[i * 6], &mac, 6 * sizeof(unsigned char));
+    }
+   
+    //Vytvorili sme si socket
+    Socket = socket(AF_INET, SOCK_DGRAM, 0);
+   
+    //Nastavene kvoli tomu aby sme posielali Broadcast
+    if(setsockopt(Socket, SOL_SOCKET, SO_BROADCAST, &BC, sizeof(BC)) == -1 ){
+        perror("setsockopt():");
+        exit(EXIT_FAILURE);
+    }
+   
+   
+    Server.sin_addr.s_addr = inet_addr("X.X.X.255");    //Broadcastova Adresa mojej siete zistena z prikazu ifconfig
+    Server.sin_family = AF_INET;
+    Server.sin_port = htons(DST_PORT);
+   
+    sendto(Socket, &data, sizeof(unsigned char)* 102, 0, (struct sockaddr *)&Server, sizeof(Server));
+    close(Socket);
+   
+    return (EXIT_SUCCESS);
+}

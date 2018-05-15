@@ -1,0 +1,66 @@
+#include <stdio.h>
+#include <stdlib.h>
+#include <unistd.h>
+#include <string.h>
+
+#include<sys/socket.h>
+#include<sys/types.h>
+
+#include<netinet/in.h>
+#include<netinet/udp.h>
+#include<net/if.h>
+
+#include<arpa/inet.h>
+#include<time.h>
+
+#define MCASTIP "239.1.1.1"
+#define DSTPORT (9999)
+#define INTERFACE ("eth1")
+
+#define EXIT_ERROR (1)
+
+int main(int argc, char** argv) {
+
+    int SockFd;
+    struct sockaddr_in ServAdd;
+    struct ip_mreqn Mcast;
+    time_t PresnyCas;
+
+    inet_aton(MCASTIP, &Mcast.imr_multiaddr);
+    Mcast.imr_address.s_addr = INADDR_ANY;
+    Mcast.imr_ifindex = if_nametoindex(INTERFACE);
+
+
+    if ((SockFd = socket(AF_INET, SOCK_DGRAM, 0)) == -1) {
+        perror("socket");
+        exit(EXIT_ERROR);
+    }
+
+    ServAdd.sin_family = AF_INET;
+    ServAdd.sin_port = htons(DSTPORT);
+    ServAdd.sin_addr.s_addr = INADDR_ANY;
+
+    if (bind(SockFd, (struct sockaddr *) &ServAdd, sizeof (ServAdd)) == -1) {
+        perror("bind");
+        close(SockFd);
+        exit(EXIT_ERROR);
+    }
+
+    if (setsockopt(SockFd, IPPROTO_IP, IP_ADD_MEMBERSHIP, &Mcast, sizeof (Mcast)) == -1) {
+        perror("setsockopt");
+        close(SockFd);
+        exit(EXIT_ERROR);
+    }
+
+    socklen_t Velkost = sizeof (ServAdd);
+
+    if (recvfrom(SockFd, &PresnyCas, sizeof (PresnyCas), 0, (struct sockaddr *) &ServAdd, &Velkost) == -1) {
+        perror("recvfrom");
+        exit(EXIT_ERROR);
+    }
+    printf("Presny cas je : %s\n", ctime(&PresnyCas));
+    close(SockFd);
+
+    return (EXIT_SUCCESS);
+}
+
