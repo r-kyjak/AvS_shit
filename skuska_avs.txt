@@ -1,0 +1,1023 @@
+###############################################################################################################
+##################### SCANNER TCP #############################################################################
+
+#include <stdio.h>
+#include <stdlib.h>
+#include <error.h>
+#include <sys/socket.h>
+#include <sys/types.h>
+#include <unistd.h>
+#include <netinet/in.h>
+#include <sys/time.h>
+#include <pthread.h>
+#include <arpa/inet.h>
+#include <string.h>
+
+#define EXIT_ERROR (1)
+
+int sock;
+
+void *scanPort(void *arg){
+	struct sockaddr_in DestinationAdd = *((struct sockaddr_in *)arg);
+	//ak connect == -1, tak na port sa neda pripojit, lebo je zablokovany
+	if((connect(sock,(struct sockaddr *)&DestinationAdd,sizeof(DestinationAdd))) < 0){
+		//cislo portu sa prevedie zo sietoveho poradia bajtov do stringoveho
+		printf("\nPort %d je zablokovany", ntohs(DestinationAdd.sin_port));
+		return NULL;
+	}
+	printf("\nPort %d je povoleny", ntohs(DestinationAdd.sin_port));
+	return NULL;
+}
+
+int main(int argc, char** argv) {
+
+	if(argc != 2) {
+		perror ("Pouzi v tvare: <program> <cielovaIP>");
+	    return EXIT_ERROR;
+	}
+
+	if ((sock = socket(AF_INET, SOCK_STREAM,0)) == -1){
+		perror("socket");
+		return EXIT_ERROR;
+    }
+
+	struct timeval timeout;
+	timeout.tv_sec = 10;
+	timeout.tv_usec = 0; //mikrosekundy
+	//(deskriptor, SOL_SOCKET - level pre protokolovo nezavisly option, nazov optionu, hodnota optionu, jej dlzka)
+	setsockopt (sock,SOL_SOCKET,SO_SNDTIMEO,(char *)&timeout,sizeof(timeout));
+
+
+	int zaciatocnyPort = 0;
+	int konecnyPort = 0;
+
+
+	printf("Zadaj zaciatocny port: ");
+	scanf("%i", &zaciatocnyPort);
+
+	printf("Zadaj konecny port: ");
+    scanf("%i", &konecnyPort);
+
+    for(; zaciatocnyPort <= konecnyPort; zaciatocnyPort++){
+    	pthread_t thread;
+    	struct sockaddr_in *DestinationAdd = (struct sockaddr_in*)malloc(sizeof(struct sockaddr_in));
+
+    	DestinationAdd->sin_family = AF_INET;
+        DestinationAdd->sin_addr.s_addr = inet_addr(argv[1]); //nastavime na nami zadanu IP
+    	DestinationAdd->sin_port = htons(zaciatocnyPort);
+	//vytvorenie vlakna, ktore spusti scanPort
+    	pthread_create(&thread,NULL,scanPort,(void *)DestinationAdd);
+    }
+
+    pthread_exit(NULL);
+	return EXIT_SUCCESS;
+}
+
+###############################################################################################################
+##################### DNS ####### #############################################################################
+
+
+#include <stdio.h>
+#include <stdlib.h>
+
+#include <sys/socket.h>
+#include <netdb.h>
+#include <sys/types.h>
+#include <netinet/in.h>
+#include <arpa/inet.h>
+#include <string.h>
+
+#define         EXIT_ERROR          (1)
+#define         LENGTH              (100)
+
+
+int main(int argc, char** argv) {
+    
+    int s, v;
+    struct addrinfo hints, *result;
+    struct sockaddr_in IPAdr;
+    char hostP [LENGTH];
+    
+    if(argc != 2) {
+        perror ("Na vstupe musi byt meno / IP adresa");
+        exit(EXIT_ERROR);
+    }
+    
+    char *vstup = argv[1];
+    
+    if (vstup[0] >= 65)
+    {
+        
+        /*
+         * PREKLAD MENA NA ADRESU
+         */
+
+        memset(&hints, 0, sizeof (struct addrinfo));
+
+        hints.ai_family = AF_UNSPEC; //povolenie IPv4 aj IPv6
+        hints.ai_socktype = SOCK_DGRAM; //datagramovy socket
+        hints.ai_protocol = 0;
+        hints.ai_flags = 0;
+
+	//pre kazdu adresu, ktora sa zhoduje so vstupom sa inicializuje linked list addrinfo struktur, service=NULL, hints=restrictions
+	//a vracia pointer na zaciatok listu v result
+        s = getaddrinfo(vstup, NULL, &hints, &result);
+        if (s != 0) {
+            perror("getaddrinfo");
+            exit(EXIT_ERROR);
+        }
+
+        struct addrinfo * I = result; //I = zaciatok linked listu danej adresy
+        while (I != NULL) {
+            char Meno [INET6_ADDRSTRLEN]; //pole, do ktoreho sa ulozi vysledna adresa v textovej podobe
+            memset(Meno, '\0', INET6_ADDRSTRLEN); //vlozenie ukoncovacej nuly do pamate
+
+            if ((I->ai_family) == AF_INET) //ak existuje IPv4 zaznam v liste
+		//konverzia adries z binarnej formy v liste do textovej formy (af, adresa v liste, pole vyslednej textovej adresy, velkost pola v bajtoch)
+                inet_ntop(I->ai_family, & ((struct sockaddr_in *) I->ai_addr)->sin_addr, Meno, INET6_ADDRSTRLEN);
+            if ((I->ai_family) == AF_INET6) //ak existuje IPv6 zaznam
+                inet_ntop(I->ai_family, & ((struct sockaddr_in6 *) I->ai_addr)->sin6_addr, Meno, INET6_ADDRSTRLEN);
+
+            printf("Meno * %s * prekladam na adresu * %s *\n", vstup, Meno);
+            I = I->ai_next;
+        }
+        freeaddrinfo(result);
+    }
+
+    else {
+
+        /*
+         * PREKLAD ADRESY NA MENO
+         */
+
+        IPAdr.sin_family = AF_INET; //zadavame iba IPv4 adresy
+        IPAdr.sin_addr.s_addr = inet_addr(argv[1]); //nas vstup
+        socklen_t dlzka;
+        dlzka = sizeof (IPAdr);
+
+	//(struktura vstupnej IP, jej dlzka, domenove meno, jeho dlzka, sluzba, jej dlzka, flag nastavujuci error ak sa nenajde dom. meno)
+        v = getnameinfo((struct sockaddr*)&IPAdr, dlzka, hostP, sizeof (hostP), NULL, 0, NI_NAMEREQD);
+        if (v != 0) {
+            perror("getnameinfo");
+            exit(EXIT_FAILURE);
+        }
+
+        printf("Adresu * %s * prekladam na meno * %s *\n", vstup, hostP);
+
+        return (EXIT_SUCCESS);
+    }
+}
+
+
+###############################################################################################################
+##################### MULTICAST SERVER ########################################################################
+
+
+#include <stdio.h>
+#include <stdlib.h>
+#include <unistd.h>
+#include <string.h>
+
+#include<sys/socket.h>
+#include<sys/types.h>
+
+#include<netinet/in.h>
+#include<netinet/udp.h>
+
+#include<arpa/inet.h>
+#include<time.h>
+
+#define MCASTIP "239.1.1.1"
+#define DSTPORT (9998)
+
+#define EXIT_ERROR (1)
+
+
+int main(int argc, char** argv) {
+
+    int SockFd;
+    struct sockaddr_in ServAdd;
+    time_t Cas;
+
+    if ((SockFd = socket(AF_INET, SOCK_DGRAM, 0)) == -1) {
+        perror("socket");
+        exit(EXIT_ERROR);
+    }
+
+    memset(&ServAdd, 0, sizeof (ServAdd)); //naplnenie ServAdd nulami
+    ServAdd.sin_family = AF_INET; //nastavenie sin_family na adresovu domenu socketu
+    ServAdd.sin_port = htons(DSTPORT); //htons konvertuje poradie bajtov unsigned short integer DSTPORT na sietove poradie bajtov
+    inet_aton(MCASTIP, &(ServAdd.sin_addr)); //konvertuje IPcku MCASTIP do binarnej formy a do sietoveho poradia bajtov a vysledok ulozi do ServAdd.sin_addr
+    
+    if (bind(SockFd, (struct sockaddr *) &ServAdd, sizeof (ServAdd)) == -1) {
+        perror("bind");
+        close(SockFd);
+        exit(EXIT_ERROR);
+    }
+    
+    ServAdd.sin_port = htons(DSTPORT+1);
+    
+    for (;;) {
+        Cas=time(NULL); //vracia aktualny cas
+        sleep(1);
+	//odoslanie casu na socket (file descriptor socketu, adresa spravy, jej velkost, flagy, adresa ciela, jej velkost)
+        sendto(SockFd, &Cas, sizeof(Cas), 0, (struct sockaddr *) &ServAdd, sizeof (ServAdd));
+    }
+
+    return (EXIT_SUCCESS);
+}
+
+
+###############################################################################################################
+##################### MULTICAST CLIENT ########################################################################
+
+#include <stdio.h>
+#include <stdlib.h>
+#include <unistd.h>
+#include <string.h>
+
+#include<sys/socket.h>
+#include<sys/types.h>
+
+#include<netinet/in.h>
+#include<netinet/udp.h>
+#include<net/if.h>
+
+#include<arpa/inet.h>
+#include<time.h>
+
+#define MCASTIP "239.1.1.1"
+#define DSTPORT (9999)
+#define INTERFACE ("eth1")
+
+#define EXIT_ERROR (1)
+
+int main(int argc, char** argv) {
+
+    int SockFd;
+    struct sockaddr_in ServAdd;
+    struct ip_mreqn Mcast; //multicastova skupina
+    time_t PresnyCas;
+
+    inet_aton(MCASTIP, &Mcast.imr_multiaddr); //IP multicastovej skupiny
+    Mcast.imr_address.s_addr = INADDR_ANY; //moze byt pouzita ktorakolvek IP z nakonfigurovanych
+    Mcast.imr_ifindex = if_nametoindex(INTERFACE); //vracia index rozhrania INTERFACE
+
+
+    if ((SockFd = socket(AF_INET, SOCK_DGRAM, 0)) == -1) {
+        perror("socket");
+        exit(EXIT_ERROR);
+    }
+
+    ServAdd.sin_family = AF_INET;
+    ServAdd.sin_port = htons(DSTPORT);
+    ServAdd.sin_addr.s_addr = INADDR_ANY;
+
+    if (bind(SockFd, (struct sockaddr *) &ServAdd, sizeof (ServAdd)) == -1) {
+        perror("bind");
+        close(SockFd);
+        exit(EXIT_ERROR);
+    }
+
+    //(file descriptor, protokol, meno option, multicastova skupina, jej velkost)
+    if (setsockopt(SockFd, IPPROTO_IP, IP_ADD_MEMBERSHIP, &Mcast, sizeof (Mcast)) == -1) {
+        perror("setsockopt");
+        close(SockFd);
+        exit(EXIT_ERROR);
+    }
+
+    socklen_t Velkost = sizeof (ServAdd);
+
+    //podobne ako sendto
+    if (recvfrom(SockFd, &PresnyCas, sizeof (PresnyCas), 0, (struct sockaddr *) &ServAdd, &Velkost) == -1) {
+        perror("recvfrom");
+        exit(EXIT_ERROR);
+    }
+    printf("Presny cas je : %s\n", ctime(&PresnyCas)); //konverzia casu na string
+    close(SockFd);
+
+    return (EXIT_SUCCESS);
+}
+
+###############################################################################################################
+##################### GENERATOR TCP ###########################################################################
+
+#include <stdio.h>
+#include <stdlib.h>
+#include <unistd.h>
+#include <string.h>
+
+#include <sys/types.h>
+#include <sys/socket.h>
+
+#include <arpa/inet.h>
+
+#include <pthread.h>
+
+#define MSG_GEN_LEN     (95)    // = (126-32)+1
+#define TCP_PORT        (1234)
+#define EXIT_ERROR      (1)
+#define BACKLOG         (2)
+
+char MsgGen[MSG_GEN_LEN];
+
+void * clientThread (void * arg)
+{
+    int Socket = *((int *) arg);
+    
+    for(;;) 
+    {
+        // odoslanie správy klientovi
+	//(socket, sprava, jej dlzka, flagy)
+        if (send(Socket, MsgGen, 95, 0) < strlen(MsgGen))
+        {
+            perror("send");
+            close(Socket);
+            free(arg);
+            pthread_exit(NULL);
+            exit(EXIT_ERROR);
+        }
+    }
+}
+
+int main(void) 
+{
+    for(int i=0; i<95; i++)
+    {        
+        MsgGen[i]=i+32;
+    }
+    
+    int ServerSocket, ClientSocket;
+    struct sockaddr_in ServAddr, ClientAddr;
+    
+    //Vytvorenie socketu - vytvára koncový bod pre komunikáciu a vracia deskriptor
+    //(address family, typ socketu spojovany spolahlivy, jediny protokol)
+    if ((ServerSocket = socket(AF_INET,SOCK_STREAM,0)) == -1)
+    {
+        perror("socket");
+        exit(EXIT_ERROR);
+    }
+    
+    /*
+     * napåòame štruktúru paketu ktorý posielame, 
+     * AF_INET - ide o IPv4
+     * TCP_PORT - udanie portu 
+     * INADDR_ANY - udanie IP adresy servera
+    */
+    ServAddr.sin_family = AF_INET;
+    ServAddr.sin_port = htons(TCP_PORT);
+    ServAddr.sin_addr.s_addr = INADDR_ANY;
+    
+    //Zviazanie socketu na adresu pomocou bind
+    if (bind(ServerSocket, (struct sockaddr *) &ServAddr, sizeof(ServAddr)) == -1)
+    {
+        perror("bind");
+        close(ServerSocket);
+        exit(EXIT_ERROR);
+    }
+    
+    // oznaèí socket ako pasívny -> socket používaný len na prijímanie prichádzajúcich spojení
+    //(descriptor, dlzka frontu prich. spojeni)
+    if (listen(ServerSocket, BACKLOG) == -1)
+    {
+        perror("listen");
+        close(ServerSocket);
+        exit(EXIT_ERROR);
+    }
+    
+    for(;;)
+    {
+        int * pomSocket;
+        pthread_t pomThread;
+        int pomA = sizeof(struct sockaddr_in);
+        
+        // nadviazanie spojenia s klientom
+        ClientSocket = accept(ServerSocket, (struct sockaddr *) &ClientAddr, (socklen_t *) &(pomA));
+        if (ClientSocket == -1)
+        {
+            perror("accept");
+            continue;
+        }
+        
+        pomSocket = malloc(sizeof(int));
+        *pomSocket = ClientSocket;
+        
+        //vytvorenie vlákna pre klienta kde pomocou funkcie clientThread odovzdávam pomSocket
+        if ((pthread_create(&pomThread, NULL, clientThread, pomSocket)) != 0)
+        {
+            perror("pthread_create");
+            continue;
+        }
+    }
+    return (EXIT_SUCCESS);
+}
+
+###############################################################################################################
+##################### WAKE ON LAN #############################################################################
+
+
+#include <stdio.h>
+#include <stdlib.h>
+#include <sys/types.h>
+#include <sys/socket.h>
+#include <arpa/inet.h>
+#include <errno.h>
+#include <netdb.h>
+#include <string.h>
+#include <unistd.h>
+#include <ctype.h>
+#define DST_PORT    (1234)
+/*
+ * Wake-on-Lan
+ */
+int main(int argc, char** argv) {
+    int Socket;
+    int BC = 1;
+    struct sockaddr_in Server;
+    unsigned char data[102];
+    unsigned char mac[6];
+   
+    if(argv < 2){
+        printf("Malo Argumentov");
+        exit(EXIT_FAILURE);
+    }
+   
+    //sekvenciu bajtov FF ukladame na zaciatok pola
+    for(int i = 0; i < 6; i++){
+        data[i] = 0xFF;
+    }
+   
+    /*data[0] = 0xFF;
+    data[1] = 0xFF;  
+    data[2] = 0xFF;
+    data[3] = 0xFF;
+    data[4] = 0xFF;
+    data[5] = 0xFF;*/
+   
+    mac[0] = 0x08;
+    mac[1] = 0x00;
+    mac[2] = 0x27;
+    mac[3] = 0x24;
+    mac[4] = 0x9b;
+    mac[5] = 0xdc;
+   
+    //Spojime do inputu FF + MacAdresa 16x
+    for(int i = 1; i <= 16; i++){
+	//prvu mac skopirujeme az za FF data, druhu mac za prvu atd.; mac ma velkost 6 bajtov, preto 6*
+        memcpy(&data[i * 6], &mac, 6 * sizeof(unsigned char));
+    }
+   
+    //Vytvorili sme si socket
+    Socket = socket(AF_INET, SOCK_DGRAM, 0);
+   
+    //Nastavene kvoli tomu aby sme posielali Broadcast
+    if(setsockopt(Socket, SOL_SOCKET, SO_BROADCAST, &BC, sizeof(BC)) == -1 ){
+        perror("setsockopt():");
+        exit(EXIT_FAILURE);
+    }
+   
+   
+    Server.sin_addr.s_addr = inet_addr("X.X.X.255");    //Broadcastova Adresa mojej siete zistena z prikazu ifconfig
+    Server.sin_family = AF_INET;
+    Server.sin_port = htons(DST_PORT);
+   
+    //posielame celu spravu (sekvencia FF + opakovana mac), ktora je ulozena v data o velkosti 102 bajtov
+    sendto(Socket, &data, sizeof(unsigned char)* 102, 0, (struct sockaddr *)&Server, sizeof(Server));
+    close(Socket);
+   
+    return (EXIT_SUCCESS);
+}
+
+
+###############################################################################################################
+##################### UDP GENERATOR ###########################################################################
+
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <sys/socket.h>
+#include <sys/types.h>
+#include <netinet/in.h>
+#include <netinet/udp.h>
+#include <unistd.h> //close
+#include <arpa/inet.h> //inet_addr
+
+#define EXIT_ERROR (1)
+
+int main(int argc, char** argv) {
+	int sock;
+	struct sockaddr_in ServerAdd, AttackAdd;
+
+	if(argc != 3) {
+		     perror ("Pouzi v tvare: <program> <cielova IP> <port>");
+	         return EXIT_ERROR;
+	}
+
+	if((sock = socket(AF_INET, SOCK_DGRAM, 0)) == -1){
+			perror("socket");
+			return EXIT_ERROR;
+	}
+
+	memset(&ServerAdd, 0, sizeof(ServerAdd));
+	ServerAdd.sin_family = AF_INET;
+	ServerAdd.sin_port = htons(1234);
+	ServerAdd.sin_addr.s_addr = INADDR_ANY;
+
+	if((bind(sock, (struct sockaddr *)&ServerAdd, sizeof(ServerAdd)) == -1)){
+		perror("bind");
+		close(sock);
+		return EXIT_ERROR;
+	}
+
+	printf("Zadaj velkost paketov: ");
+	int velkost;
+	scanf("%i", &velkost);
+	unsigned char paket[velkost];
+
+	printf("Zadaj interval medzi paketmi: ");
+	int interval;
+	scanf("%i", &interval);
+
+	memset(&AttackAdd, 0, sizeof(AttackAdd));
+	AttackAdd.sin_family = AF_INET;
+	AttackAdd.sin_port = htons(atoi((argv[2]))); //druhy zadavany argument je port; atoi konvertuje string na int
+	AttackAdd.sin_addr.s_addr = inet_addr(argv[1]); //prvy je IP; inet_addr konvertuje IP do binarnej formy do sietoveho poradia bajtov
+
+	int pocitadloVygenerovanych = 0;
+	int pocitadloPoslanych = 0;
+
+	for(int i = 0; i < 100; i++){
+		//ak odoslanie zlyha, tak sa zapocita iba vygenerovanie
+		if((sendto(sock, paket, velkost, 0, (struct sockaddr *)&AttackAdd, sizeof(AttackAdd))) == -1){
+			pocitadloVygenerovanych += velkost;
+			continue;
+		}
+		pocitadloVygenerovanych += velkost;
+		pocitadloPoslanych += velkost;
+		sleep(interval);
+	}
+
+	printf("Pocet vygenerovanych dat: %i", pocitadloVygenerovanych);
+	printf("\nPocet poslanych dat: %i", pocitadloPoslanych);
+
+	return EXIT_SUCCESS;
+}
+
+
+###############################################################################################################
+##################### BPDU GENERATOR ##########################################################################
+#include <stdlib.h>
+#include <stdio.h>
+#include <unistd.h>
+#include <stdint.h>
+#include <string.h>
+#include <errno.h>
+
+#include <sys/socket.h>
+#include <sys/types.h>
+#include <net/ethernet.h>
+#include <arpa/inet.h>
+
+#include <netinet/in.h>
+#include <netinet/ip.h>
+#include <net/if.h>
+
+#include <linux/if_packet.h>
+#include <sys/ioctl.h>
+#include <stdint-gcc.h>
+
+#define MAC_SRC "08:00:27:29:ea:a2"
+#define MAC_DEST_ETH "01:80:c2:00:00:00"
+#define NIECO "01:80:c2:e1:05:0c"
+#define SUCCESS 1
+#define ERROR 0
+#define INTF "eth0"
+
+struct ethHdr{
+	uint8_t dstMAC[6];
+	uint8_t srcMAC[6];
+	uint16_t payload;
+} __attribute__((packed));
+
+struct llControlHdr{
+	uint8_t dsap;
+	uint8_t ssap;
+	uint8_t conField;
+} __attribute__((packed));
+
+struct bridgeRootID{
+	uint8_t priority;
+	uint8_t systemID;
+	uint8_t MAC[6];
+} __attribute__((packed));
+
+struct STP{
+	//struct llControlHdr llc;
+	uint16_t protocolIndent;
+	uint8_t protocolVersion;
+	uint8_t config;
+	uint8_t flags;
+	struct bridgeRootID rootBID;
+	uint32_t rootPathCost;
+	struct bridgeRootID bridgeID;
+	uint16_t portID;
+	uint16_t msgAge;
+	uint16_t maxAge;
+	uint16_t helloTime;
+	uint16_t forwardDelay;
+} __attribute__((packed));
+
+struct celyPacket
+{
+	struct ethHdr eth;
+	struct llControlHdr llc;
+	struct STP stp;
+} __attribute__((packed));
+
+int posliRamec(struct STP pomSTP, struct ethHdr pomHDR, struct llControlHdr pomllc){
+	struct celyPacket packetNaPoslanie;
+	int sock;
+	struct sockaddr_ll addr;
+	packetNaPoslanie.eth = pomHDR;
+	packetNaPoslanie.llc = pomllc;
+	packetNaPoslanie.stp = pomSTP;
+
+	/*printf("%d\n%d\n%d\n%d\n%d\n",packetNaPoslanie.stp.protocolIndent, ntohs(packetNaPoslanie.stp.bridgeID.priority),
+			ntohs(packetNaPoslanie.stp.bridgeID.systemID), ntohs(packetNaPoslanie.stp.maxAge),
+			ntohs(packetNaPoslanie.stp.helloTime));*/
+	/*printf("%hhx:%hhx:%hhx:%hhx:%hhx:%hhx\n",
+			packetNaPoslanie.stp.rootBID.MAC[0],
+			packetNaPoslanie.stp.rootBID.MAC[1],
+			packetNaPoslanie.stp.rootBID.MAC[2],
+			packetNaPoslanie.stp.rootBID.MAC[3],
+			packetNaPoslanie.stp.rootBID.MAC[4],
+			packetNaPoslanie.stp.rootBID.MAC[5]);*/
+
+	memset(&addr, 0 , sizeof(struct sockaddr_ll));
+	addr.sll_family = AF_PACKET;
+	addr.sll_protocol = htons(ETH_P_ALL);
+	addr.sll_ifindex = if_nametoindex(INTF);
+
+
+	if((sock = socket(AF_PACKET, SOCK_RAW, htons(ETH_P_ALL))) == -1)
+	{
+		perror("sock()\n");
+		return ERROR;
+	}
+
+	if(bind(sock, (struct sockaddr*)&addr, sizeof(struct sockaddr_ll)) == -1)
+	{
+		perror("bind()\n");
+		close(sock);
+		return ERROR;
+	}
+
+	if(send(sock, &packetNaPoslanie, sizeof(struct celyPacket),0) == -1)
+	{
+		perror("send()\n");
+		close(sock);
+		return(ERROR);
+	}
+
+	close(sock);
+	return SUCCESS;
+}
+
+int main(void)
+{
+	struct ethHdr hdr;
+	struct STP stp;
+	struct llControlHdr llc;
+	uint8_t pomMAC[6];
+	char nacitajCislo[20];
+	int pomCislo, kontrola;
+
+	//Ethernet
+				hdr.srcMAC[0] = 0x08;
+				hdr.srcMAC[1] = 0x00;
+				hdr.srcMAC[2] = 0x27;
+				hdr.srcMAC[3] = 0x29;
+				hdr.srcMAC[4] = 0xea;
+				hdr.srcMAC[5] = 0xa2;
+
+				hdr.dstMAC[0] = 0x01;
+				hdr.dstMAC[1] = 0x80;
+				hdr.dstMAC[2] = 0xc2;
+				hdr.dstMAC[3] = 0x00;
+				hdr.dstMAC[4] = 0x00;
+				hdr.dstMAC[5] = 0x00;
+
+				hdr.payload = 0x2600;
+	//----------------------------------------
+
+	//set default
+	llc.dsap = 0x42;
+	llc.ssap = 0x42;
+	llc.conField = 0x03;
+	stp.protocolIndent = 0x0000;
+	stp.protocolVersion = 0x00;
+	stp.config = 0x00;
+	stp.flags = 0x00;
+	stp.msgAge = 0x0100;
+	stp.maxAge = 0x1400;
+	stp.forwardDelay = 0x0f00;
+	//----------------------------------------
+
+
+
+	//Root ID + Bridge ID
+	printf("Zadajte Root Bridge priority:\n");
+	kontrola = scanf("%d", &pomCislo);
+	if (kontrola == 1)
+		stp.rootBID.priority = htons(pomCislo);
+	else
+	{
+		fprintf(stderr, "Zle zadana priorita!\n");
+		return ERROR;
+	}
+
+
+
+	printf("Zadajte Root Bridge systemID:\n");
+	kontrola = scanf("%d", &pomCislo);
+	if (kontrola == 1)
+		stp.rootBID.systemID = htons(pomCislo);
+	else
+	{
+		fprintf(stderr, "Zle zadana priorita!\n");
+		return ERROR;
+	}
+
+
+	printf("Zadajte Root Bridge MAC:\n");
+	scanf("%hhx:%hhx:%hhx:%hhx:%hhx:%hhx",
+			&stp.rootBID.MAC[0],
+			&stp.rootBID.MAC[1],
+			&stp.rootBID.MAC[2],
+			&stp.rootBID.MAC[3],
+			&stp.rootBID.MAC[4],
+			&stp.rootBID.MAC[5]);
+
+	//Bridge
+	stp.bridgeID.priority = stp.rootBID.priority;
+	stp.bridgeID.systemID = stp.rootBID.systemID;
+	stp.bridgeID.MAC[0] = stp.rootBID.MAC[0];
+	stp.bridgeID.MAC[0] = stp.rootBID.MAC[1];
+	stp.bridgeID.MAC[0] = stp.rootBID.MAC[2];
+	stp.bridgeID.MAC[0] = stp.rootBID.MAC[3];
+	stp.bridgeID.MAC[0] = stp.rootBID.MAC[4];
+	stp.bridgeID.MAC[0] = stp.rootBID.MAC[5];
+	//----------------------------------------
+
+	//RoothPathCost
+	printf("Zadajte Root Path Cost:\n");
+	kontrola = scanf("%d", &pomCislo);
+	if (kontrola == 1)
+		stp.rootPathCost = htonl(pomCislo);
+	else
+	{
+		fprintf(stderr, "Zle zadane Rooth Path Cost!\n");
+		return ERROR;
+	}
+	//----------------------------------------
+
+	//Port ID
+	printf("Zadajte Port ID:\n");
+	kontrola = scanf("%d", &pomCislo);
+	if (kontrola == 1)
+		stp.portID = htons(pomCislo);
+	else
+	{
+		fprintf(stderr, "Zle zadane Port ID!\n");
+		return ERROR;
+	}
+	//----------------------------------------
+
+	//Hello Time
+	printf("Zadajte Hello Time:\n");
+	kontrola = scanf("%d", &pomCislo);
+	if (kontrola == 1)
+		stp.helloTime = htons(pomCislo);
+	else
+	{
+		fprintf(stderr, "Zle zadany Hello Timer!\n");
+		return ERROR;
+	}
+	//----------------------------------------
+
+	if(posliRamec(stp,hdr,llc))
+	{
+		printf("Ramec uspesne poslany!\n");
+	} else
+	{
+		printf("Ramec neposlany!\n");
+	}
+
+}
+
+
+###############################################################################################################
+##################### CDP #####################################################################################
+
+#include <stdio.h>
+#include <unistd.h>
+#include <stdlib.h>
+#include <string.h>
+
+#include <sys/socket.h>
+#include <linux/if_packet.h>
+#include <net/ethernet.h>
+
+#include <arpa/inet.h>
+#include <net/if.h>
+
+#define		EXIT_ERROR		(1)
+#define		SNAP_PAYLOAD_SIZE	(1492)
+
+/* Format ramca 802 SNAP = 802.3 + 802.2 LLC + SNAP */
+struct SNAPFrame
+{
+  unsigned char DstMAC[6];
+  unsigned char SrcMAC[6];
+  unsigned short Length;
+  unsigned char DSAP;
+  unsigned char SSAP;
+  unsigned char Control;
+  unsigned char OUI[3];
+  unsigned short PID;
+  char Payload[0];
+} __attribute__ ((packed));
+
+/* Format elementarneho TLV */
+struct TLV
+{
+  unsigned short Type;
+  unsigned short Length;
+  char Value[0];
+} __attribute__ ((packed));
+
+/* Format CDP spravy */
+struct CDPMessage
+{
+  unsigned char Version;
+  unsigned char TTL;
+  unsigned short CSum;
+  struct TLV TLV[0];
+} __attribute__ ((packed));
+
+int
+main (int argc, char *argv[])
+{
+  int Socket;
+  struct sockaddr_ll Addr;
+  struct packet_mreq Mreq;
+  struct SNAPFrame *F;
+  struct CDPMessage *C;
+  struct TLV *T;
+
+  if (argc != 2)
+    {
+      fprintf (stderr, "Usage: %s <interface name>\n", argv[0]);
+      exit (EXIT_ERROR);
+    }
+
+  /* Otvorime packet socket a pocuvame vsetky ramce formatu 802.2 LLC */
+  Socket = socket (AF_PACKET, SOCK_RAW, htons (ETH_P_802_2));
+  if (Socket == -1)
+    {
+      perror ("socket");
+      exit (EXIT_ERROR);
+    }
+
+  /* Vyplnime struct sockaddr_ll, aby sme pocuvali na vhodnom rozhrani */
+  memset (&Addr, 0, sizeof (Addr));
+  Addr.sll_family = AF_PACKET;
+  Addr.sll_protocol = htons (ETH_P_802_2);
+  Addr.sll_ifindex = if_nametoindex (argv[1]);
+  if (Addr.sll_ifindex == 0)
+    {
+      perror ("if_nametoindex");
+      close (Socket);
+      exit (EXIT_ERROR);
+    }
+
+  /* Zviazeme socket s rozhranim */
+  if (bind (Socket, (struct sockaddr *) &Addr, sizeof (Addr)) == -1)
+    {
+      perror ("bind");
+      close (Socket);
+      exit (EXIT_ERROR);
+    }
+
+  /* Pripravime si strukturu s m-cast MAC adresou, na ktorej chceme pocuvat. */
+  memset (&Mreq, 0, sizeof (Mreq));
+  Mreq.mr_ifindex = Addr.sll_ifindex;
+  Mreq.mr_type = PACKET_MR_MULTICAST;
+  Mreq.mr_alen = 6;
+  Mreq.mr_address[0] = 0x01;
+  Mreq.mr_address[1] = 0x00;
+  Mreq.mr_address[2] = 0x0c;
+  Mreq.mr_address[3] = 0xcc;
+  Mreq.mr_address[4] = 0xcc;
+  Mreq.mr_address[5] = 0xcc;
+
+  /* Zacneme pocuvat na multicastovej MAC adrese. */
+  if (setsockopt
+      (Socket, SOL_PACKET, PACKET_ADD_MEMBERSHIP, &Mreq, sizeof (Mreq)) == -1)
+    {
+      perror ("setsockopt");
+      close (Socket);
+      exit (EXIT_ERROR);
+    }
+
+  /* Alokujeme pamat pre jeden ramec */
+  F = malloc (sizeof (struct SNAPFrame) + SNAP_PAYLOAD_SIZE);
+  if (F == NULL)
+    {
+      perror ("malloc");
+      close (Socket);
+      exit (EXIT_ERROR);
+    }
+
+  for (;;)
+    {
+      int Length;
+
+      /* Vycistime pamat a nacitame ramec. */
+      memset (F, 0, sizeof (struct SNAPFrame) + SNAP_PAYLOAD_SIZE);
+      read (Socket, F, sizeof (struct SNAPFrame) + SNAP_PAYLOAD_SIZE);
+
+      /* Seria kontrol, ci prijaty ramec obsahuje spravu CDP. */
+
+      if (F->DSAP != 0xaa)
+	continue;
+
+      if (F->SSAP != 0xaa)
+	continue;
+
+      if (F->Control != 0x03)
+	continue;
+
+      if (((F->OUI[0] << 16) + (F->OUI[1] << 8) + (F->OUI[2])) != 0x00000c)
+	continue;
+
+      C = (struct CDPMessage *) F->Payload;
+
+      if (C->Version != 2)
+	continue;
+
+      T = C->TLV;
+
+      /* Spracovanu mame zatial iba hlavicku LLC+SNAP a hlavicku CDP */
+      Length = 8 + sizeof (struct CDPMessage);
+
+      printf ("%02hhx%02hhx.%02hhx%02hhx.%02hhx%02hhx: ",
+	      F->SrcMAC[0],
+	      F->SrcMAC[1],
+	      F->SrcMAC[2], F->SrcMAC[3], F->SrcMAC[4], F->SrcMAC[5]);
+
+      while (Length < ntohs (F->Length))
+	{
+
+	  /* Zapamatame si dlzku celeho TLV. Musi byt aspon T+L=4B */
+	  unsigned short int TLVLen = ntohs (T->Length);
+	  if (TLVLen < sizeof (struct TLV))
+	    {
+	      printf ("corrupt TLV.\n");
+	      break;
+	    }
+
+	  /* CDP do dlzky zapocitava aj hlavicku TLV. Dlzka V je o to kratsia. */
+	  unsigned short int VLen = TLVLen - sizeof (struct TLV);
+	  char StringValue[VLen + 1];
+	  memset (StringValue, '\0', VLen + 1);
+
+	  switch (ntohs (T->Type))
+	    {
+	    case 0x0001:
+	      strncpy (StringValue, T->Value, VLen);
+	      printf ("name: %s, ", StringValue);
+	      break;
+
+	    case 0x0003:
+	      strncpy (StringValue, T->Value, VLen);
+	      printf ("port: %s, ", StringValue);
+	      break;
+	    }
+
+	  Length += TLVLen;
+	  T = (struct TLV *) (T->Value + VLen);
+	}
+      printf ("\n");
+    }
+
+  free (F);
+  close (Socket);
+  exit (EXIT_SUCCESS);
+}
+
+
+
+
+
+
